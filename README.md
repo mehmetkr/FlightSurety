@@ -1,3 +1,23 @@
+# Note to the reviewer
+    * Versions
+    Truffle v5.4.1 (core: 5.4.1)
+    Solidity v0.5.16 (solc-js)
+    Web3.js v1.4.0
+    Node v16.17.1
+    npm: v8.15.0
+
+    * Setup
+        1- Open a terminal and run 'npm install'
+        2- Run 'ganache-cli -m "candy maple cake sugar pudding cream honey rich smooth crumble sweet treat"'
+        3- Copy the addresses of the "Available Accounts" provided by genache into the account addresses in \FlightSurety\config\testConfig.js
+        4- Open a new terminal and run 'npm run server'
+        5- Open a new terminal and run 'truffle compile' and observe that the contracts are compiled successfully
+        6- Run 'truffle test ./test/flightSurety.js' and observe that all the tests pass.
+        7- Run 'truffle test ./test/oracles.js' and observe that all the tests pass.
+        8- Run 'truffle migrate' to deploy the contracts.
+        9- Run 'npm run dapp', visit the URL 'http://localhost:8000' and observe that the dapp is running.
+        10- Run 'npm run dapp:prod' to build the dapp for production.
+
 # FlightSurety
 
 FlightSurety is a sample application project for Udacity's Blockchain course.
