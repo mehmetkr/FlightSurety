@@ -1,10 +1,10 @@
-pragma solidity ^0.4.25;
+pragma solidity ^0.4.26;
 
 // It's important to avoid vulnerabilities due to numeric overflow bugs
 // OpenZeppelin's SafeMath library, when used correctly, protects agains such bugs
 // More info: https://www.nccgroup.trust/us/about-us/newsroom-and-events/blog/2018/november/smart-contract-insecurity-bad-arithmetic/
 
-import "../node_modules/openzeppelin-solidity/contracts/math/SafeMath.sol";
+import "openzeppelin-solidity/contracts/math/SafeMath.sol";
 
 /************************************************** */
 /* FlightSurety Smart Contract                      */
@@ -26,6 +26,8 @@ contract FlightSuretyApp {
 
     address private contractOwner;          // Account used to deploy contract
 
+    FlightSuretyDataContract private flightSuretyData;
+
     struct Flight {
         bool isRegistered;
         uint8 statusCode;
@@ -34,7 +36,18 @@ contract FlightSuretyApp {
     }
     mapping(bytes32 => Flight) private flights;
 
- 
+    uint256 airlineVoteThreshold = 4; // Number of registered airlines before multi-party consensus of 50% of voters is required for new registration
+
+    uint256 public constant AIRLINE_FUNDING_FEE = 10 ether;
+
+
+    struct FlightInsurance {
+        bytes32 flightID;
+        uint256 insuranceAmount;
+    }
+
+    mapping (address => FlightInsurance) private passengers;
+
     /********************************************************************************************/
     /*                                       FUNCTION MODIFIERS                                 */
     /********************************************************************************************/
@@ -63,6 +76,30 @@ contract FlightSuretyApp {
         _;
     }
 
+    modifier requireRegisteredAirline()
+    {
+        require(flightSuretyData.isAirlineRegistered(msg.sender), "Caller is not a registered airline");
+        _;
+    }
+
+    modifier requireFundedAirline()
+    {
+        require(flightSuretyData.isAirlineFunded(msg.sender), "Caller is not a funded airline");
+        _;
+    }
+
+    modifier sufficientFundingProvided()
+    {
+        require(msg.value > AIRLINE_FUNDING_FEE, "Caller is not a registered airline");
+        _;
+    }
+
+    modifier requireFlightIsRegistered(bytes32 flightID)
+    {
+        require(flights[flightID].isRegistered = true, "Flight is not registered");
+        _;
+    }
+
     /********************************************************************************************/
     /*                                       CONSTRUCTOR                                        */
     /********************************************************************************************/
@@ -73,10 +110,12 @@ contract FlightSuretyApp {
     */
     constructor
                                 (
+                                    address dataContract
                                 ) 
                                 public 
     {
         contractOwner = msg.sender;
+        flightSuretyData = FlightSuretyDataContract(dataContract);
     }
 
     /********************************************************************************************/
@@ -91,6 +130,13 @@ contract FlightSuretyApp {
         return true;  // Modify to call data contract's status
     }
 
+    function hasSufficientVote(address airineAddress) 
+                            private 
+                            returns(bool) 
+    {
+        return flightSuretyData.getAffirmativeVotes(airineAddress) >= (flightSuretyData.getNumberOfAirlines() / 2);
+    }
+
     /********************************************************************************************/
     /*                                     SMART CONTRACT FUNCTIONS                             */
     /********************************************************************************************/
@@ -102,12 +148,57 @@ contract FlightSuretyApp {
     */   
     function registerAirline
                             (   
+                                address newAirlineAddress,
+                                string newAirlineName
                             )
                             external
-                            pure
+                            requireIsOperational
                             returns(bool success, uint256 votes)
     {
-        return (success, 0);
+        if (flightSuretyData.getNumberOfAirlines() <= airlineVoteThreshold) {
+            require(flightSuretyData.isAirlineRegistered(msg.sender));
+            flightSuretyData.addAirline(newAirlineAddress, newAirlineName);
+            return(success, 0);
+        } else {
+            require(hasSufficientVote(newAirlineAddress));
+            flightSuretyData.addAirline(newAirlineAddress, newAirlineName);
+            return(success, flightSuretyData.getAffirmativeVotes(newAirlineAddress));
+        }
+    }
+
+    function castAffirmativeVote (address votedAirlineAddress) public requireRegisteredAirline {
+        flightSuretyData.castAffirmativeVoteByAirline(msg.sender, votedAirlineAddress);
+    }
+
+    function fundAirline
+                            (   
+                                address airlineToBeFunded
+                            ) 
+                            external
+                            payable
+                            requireIsOperational
+                            sufficientFundingProvided
+    {
+        airlineToBeFunded.transfer(msg.value);
+        
+    }
+
+    function buyPassengerFlightInsurance
+                            (
+                                bytes32 flightID,
+                                address passengerAddress,
+                                uint256 insuranceAmount                            
+                            )
+                            requireIsOperational
+                            requireFlightIsRegistered(flightID)
+                            external
+                            payable
+                            returns(bool)
+    {
+        passengerAddress.transfer(insuranceAmount);
+        passengers[passengerAddress].flightID = flightID;
+        passengers[passengerAddress].insuranceAmount = insuranceAmount;
+        return true;
     }
 
 
@@ -117,11 +208,20 @@ contract FlightSuretyApp {
     */  
     function registerFlight
                                 (
+                                    string flight,
+                                    uint256 timestamp
                                 )
+                                requireIsOperational
+                                requireRegisteredAirline
+                                requireFundedAirline
                                 external
-                                pure
     {
 
+        bytes32 flightKey = getFlightKey(msg.sender, flight, timestamp);
+        flights[flightKey].isRegistered = true;
+        flights[flightKey].updatedTimestamp = timestamp;
+        flights[flightKey].airline = msg.sender;
+        flights[flightKey].statusCode = STATUS_CODE_UNKNOWN;
     }
     
    /**
@@ -136,8 +236,10 @@ contract FlightSuretyApp {
                                     uint8 statusCode
                                 )
                                 internal
-                                pure
+                                requireIsOperational
     {
+        bytes32 flightKey = getFlightKey(airline, flight, timestamp);
+        flights[flightKey].statusCode = statusCode;
     }
 
 
@@ -334,4 +436,14 @@ contract FlightSuretyApp {
 
 // endregion
 
-}   
+}
+
+contract FlightSuretyDataContract {
+    function getAffirmativeVotes (address airlineAddress) public view returns(uint);
+    function getNumberOfAirlines () external returns(uint256);
+    function isAirlineRegistered(address airlineAddress) public view returns(bool);
+    function addAirline (address newAirlineAddress, string newAirlineName) public;
+    function castAffirmativeVoteByAirline (address votingAirlineAddress, address votedAirlineAddress) public;
+    function setIsFunded (address airlineAddress, bool fundedStatus) external;
+    function isAirlineFunded(address airlineAddress) public view returns(bool);
+}
